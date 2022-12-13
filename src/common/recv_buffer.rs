@@ -1,8 +1,8 @@
-use std::collections::{BTreeMap, VecDeque};
-use std::ops::Bound::{Included, Unbounded};
+use std::collections::VecDeque;
 use bytes::{Bytes, BytesMut};
 
 use crate::common::seq32::Seq32;
+use crate::common::range_set::RangeSet;
 
 // Minimum size of recv buffer block allocation unit
 const RBUF_BLOCK_BIT: u32 = 17;
@@ -12,27 +12,22 @@ const RBUF_BLOCK_MASK: u32 = RBUF_BLOCK_SIZE - 1;
 pub struct RecvBuffer {
     start_pos: Seq32,
     max_blocks: u32,
-    range_map: BTreeMap<Seq32, Seq32>,
+    range_set: RangeSet,
     blocks: VecDeque<BytesMut>,
 }
 
 impl RecvBuffer {
     pub fn with_capacity(size: u32) -> Self {
-        let mut bcnt = size / RBUF_BLOCK_SIZE;
-        if size & RBUF_BLOCK_MASK != 0 {
-            bcnt += 1;
-        }
-
         RecvBuffer {
             start_pos: Seq32::from(0),
-            max_blocks: bcnt,
-            range_map: BTreeMap::new(),
+            max_blocks: size / RBUF_BLOCK_SIZE + if size & RBUF_BLOCK_MASK != 0 { 1 } else { 0 },
+            range_set: RangeSet::new(),
             blocks: VecDeque::new(),
         }
     }
 
     pub fn readable_size(&self) -> usize {
-        match self.range_map.iter().next() {
+        match self.range_set.iter().next() {
             Some(first) => {
                 if *first.0 == self.start_pos {
                     *(*first.1 - *first.0) as usize
@@ -65,7 +60,7 @@ impl RecvBuffer {
         }
 
         let mut remain = len;
-        let range = self.range_map.iter().next().unwrap();
+        let range = self.range_set.iter().next().unwrap();
         while remain > 0 {
             let block_size = (RBUF_BLOCK_SIZE - (*self.start_pos & RBUF_BLOCK_MASK)) as usize;
             if remain >= block_size {
@@ -80,9 +75,9 @@ impl RecvBuffer {
 
         let orig_pos = range.0.clone();
         let orig_end = range.1.clone();
-        self.range_map.remove(&orig_pos);
+        self.range_set.remove(&orig_pos);
         if self.start_pos != orig_end {
-            self.range_map.insert(self.start_pos.clone(), orig_end);
+            self.range_set.insert(self.start_pos.clone(), orig_end);
         }
         
         Ok(())
@@ -99,25 +94,10 @@ impl RecvBuffer {
             return Err("out-of-range");
         }
 
-        // insert or update range map
-        let mut merge_start = pos;
-        let before = self.range_map.range_mut((Unbounded, Included(pos)));
-        if let Some(last) = before.last() {
-            if *last.1 >= pos {
-                if *last.1 >= end {
-                    return Err("duplicated-data");
-                } else {
-                    *last.1 = end;
-                    merge_start = *last.0;
-                }
-            } else {
-                self.range_map.insert(pos, end);
-            }
-        } else {
-            self.range_map.insert(pos, end);
+        // insert data range
+        if !self.range_set.insert(pos, end) {
+            return Err("duplicated-data");
         }
-
-        self.compress_range_map(&merge_start);
 
         // allocate and copy data to buffer block
         let block_start_pos = self.start_pos - (*self.start_pos & RBUF_BLOCK_MASK);
@@ -144,28 +124,6 @@ impl RecvBuffer {
         }
         
         Ok(())
-    }
-
-    fn compress_range_map(&mut self, pos: &Seq32) {
-        // merge overlapped intervals
-        let mut keys_to_remove = vec![];
-        let mut after = self.range_map.range_mut((Included(pos), Unbounded));
-        let merge_range = after.next().unwrap();
-        for (next_start, next_end) in after {
-            if *merge_range.1 >= *next_start {
-                if *next_end >= *merge_range.1 {
-                    *merge_range.1 = *next_end;
-                    keys_to_remove.push(*next_start);
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-
-        // remove overlapped intervals from range map
-        keys_to_remove.iter().for_each(|x| { self.range_map.remove(x); });
     }
 }
 
@@ -211,30 +169,34 @@ mod tests {
     #[test]
     fn recv_buffer_5gb_read_write_test() {
         let mut rng = rand::thread_rng();
-        let mut random_buf = BytesMut::with_capacity(10000);
+        let mut random_buf0 = BytesMut::with_capacity(10000);
+        let mut random_buf1 = BytesMut::with_capacity(10000);
         for _ in 0..2500 {
-            random_buf.put_u32(rng.gen::<u32>());
+            random_buf0.put_u32(rng.gen::<u32>());
+            random_buf1.put_u32(rng.gen::<u32>());
         }
 
-        let data = random_buf.freeze();
+        let data = [random_buf0.freeze(), random_buf1.freeze()];
         let mut rbuf = RecvBuffer::with_capacity(13107200);
         let mut test_bytes = 0;
         let mut pos = Seq32::from(0);
+        let mut round = 0;
         while test_bytes < 5368709120u64 {
-            assert_eq!(rbuf.write(pos, &data), Ok(()));
-            assert_eq!(rbuf.readable_size(), data.len());
+            assert_eq!(rbuf.write(pos, &data[round]), Ok(()));
+            assert_eq!(rbuf.readable_size(), data[round].len());
 
             let mut cmp_offset = 0;
             while rbuf.readable_size() > 0 {
                 let left = rbuf.peek().unwrap();
                 let len = left.len();
-                assert_eq!(left, &data[cmp_offset .. cmp_offset + len]);
+                assert_eq!(left, &data[round][cmp_offset .. cmp_offset + len]);
                 assert_eq!(rbuf.consume(len), Ok(()));
                 cmp_offset += len;
             }
 
-            pos += data.len() as u32;
-            test_bytes += data.len() as u64;
+            pos += data[round].len() as u32;
+            test_bytes += data[round].len() as u64;
+            round ^= 1;
         }
     }
 }
