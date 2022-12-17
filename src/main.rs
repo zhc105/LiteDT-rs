@@ -1,6 +1,7 @@
 //use bytes::Bytes;
 
 mod common;
+mod connection;
 
 fn main() {
     //let mut rbuf = common::recv_buffer::RecvBuffer::with_capacity(1048576);

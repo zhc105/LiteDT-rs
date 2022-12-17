@@ -101,5 +101,11 @@ mod tests {
         assert_eq!(range_set.insert(Seq32::from(4294967280), Seq32::from(200)), true);
         assert_eq!(range_set.len(), 1);
         assert_eq!(range_set.insert(Seq32::from(0), Seq32::from(4294967280)), false);
+        assert_eq!(range_set.insert(Seq32::from(4294967270), Seq32::from(4294967279)), true);
+        assert_eq!(range_set.len(), 2);
+        assert_eq!(range_set.iter().next(), Some((&Seq32::from(4294967270), &Seq32::from(4294967279))));
+        assert_eq!(range_set.remove(&Seq32::from(4294967270)), Some(Seq32::from(4294967279)));
+        assert_eq!(range_set.iter().next(), Some((&Seq32::from(4294967280), &Seq32::from(200))));
+        assert_eq!(range_set.len(), 1);
     }
 }

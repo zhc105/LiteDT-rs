@@ -54,7 +54,6 @@ impl RecvBuffer {
         if len == 0 {
             return Ok(());
         }
-
         if self.readable_size() < len {
             return Err("no-enough-data");
         }
@@ -77,7 +76,7 @@ impl RecvBuffer {
         let orig_end = range.1.clone();
         self.range_set.remove(&orig_pos);
         if self.start_pos != orig_end {
-            self.range_set.insert(self.start_pos.clone(), orig_end);
+            self.range_set.insert(self.start_pos, orig_end);
         }
         
         Ok(())
@@ -89,16 +88,13 @@ impl RecvBuffer {
         if data.len() > max_size as usize {
             return Err("size-limit-exceed");
         }
-
         if *(pos - self.start_pos) > max_size || *(end - self.start_pos) > max_size {
             return Err("out-of-range");
         }
-
         // insert data range
         if !self.range_set.insert(pos, end) {
             return Err("duplicated-data");
         }
-
         // allocate and copy data to buffer block
         let block_start_pos = self.start_pos - (*self.start_pos & RBUF_BLOCK_MASK);
         let required_blocks = (*(end - block_start_pos) >> RBUF_BLOCK_BIT) +
@@ -180,23 +176,23 @@ mod tests {
         let mut rbuf = RecvBuffer::with_capacity(13107200);
         let mut test_bytes = 0;
         let mut pos = Seq32::from(0);
-        let mut round = 0;
+        let mut slot = 0;
         while test_bytes < 5368709120u64 {
-            assert_eq!(rbuf.write(pos, &data[round]), Ok(()));
-            assert_eq!(rbuf.readable_size(), data[round].len());
+            assert_eq!(rbuf.write(pos, &data[slot]), Ok(()));
+            assert_eq!(rbuf.readable_size(), data[slot].len());
 
             let mut cmp_offset = 0;
             while rbuf.readable_size() > 0 {
                 let left = rbuf.peek().unwrap();
                 let len = left.len();
-                assert_eq!(left, &data[round][cmp_offset .. cmp_offset + len]);
+                assert_eq!(left, &data[slot][cmp_offset .. cmp_offset + len]);
                 assert_eq!(rbuf.consume(len), Ok(()));
                 cmp_offset += len;
             }
 
-            pos += data[round].len() as u32;
-            test_bytes += data[round].len() as u64;
-            round ^= 1;
+            pos += data[slot].len() as u32;
+            test_bytes += data[slot].len() as u64;
+            slot ^= 1;
         }
     }
 }
