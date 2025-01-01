@@ -50,7 +50,7 @@ impl RecvBuffer {
         }
     }
 
-    pub fn consume(&mut self, len: usize) -> Result<(), &'static str> {
+    pub fn advance(&mut self, len: usize) -> Result<(), &'static str> {
         if len == 0 {
             return Ok(());
         }
@@ -145,7 +145,7 @@ mod tests {
         let s = Bytes::from("test word2hello world");
         for i in 0..20 {
             assert_eq!(rbuf.peek(), Some(&s[i..]));
-            assert_eq!(rbuf.consume(1), Ok(()));
+            assert_eq!(rbuf.advance(1), Ok(()));
         }
 
         assert_eq!(rbuf.write(Seq32::from(21), &Bytes::from("append new")), Ok(()));
@@ -156,10 +156,10 @@ mod tests {
         let s = Bytes::from("dappend new");
         for i in 0..11 {
             assert_eq!(rbuf.peek(), Some(&s[i..]));
-            assert_eq!(rbuf.consume(1), Ok(()));
+            assert_eq!(rbuf.advance(1), Ok(()));
         }
 
-        assert_eq!(rbuf.consume(1), Err("no-enough-data"));
+        assert_eq!(rbuf.advance(1), Err("no-enough-data"));
     }
 
     #[test]
@@ -186,7 +186,7 @@ mod tests {
                 let left = rbuf.peek().unwrap();
                 let len = left.len();
                 assert_eq!(left, &data[slot][cmp_offset .. cmp_offset + len]);
-                assert_eq!(rbuf.consume(len), Ok(()));
+                assert_eq!(rbuf.advance(len), Ok(()));
                 cmp_offset += len;
             }
 
